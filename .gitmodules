@@ -1,0 +1,3 @@
+[submodule "external/AMGPCG_Taichi_Pybind"]
+	path = external/AMGPCG_Taichi_Pybind
+	url = https://github.com/swang3081/AMGPCG_Taichi_Pybind.git
