@@ -20,7 +20,7 @@ Then, install the requirements with:
 pip install -r requirements.txt
 ```
 
-Then, follow the instruction and install the AMGPCG pybind in the [`external/AMGPCG_Pybind_Torch`](external/AMGPCG_Pybind_Torch) folder.
+Then, follow the instructions in the [AMGPCG_Pybind_Torch repository](https://github.com/swang3081/AMGPCG_Pybind_Torch) to install the AMGPCG pybind.
 
 ## Simulation
 To run, execute:
