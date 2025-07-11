@@ -4,6 +4,15 @@ by [Sinan Wang](https://sinanw.com), [Junwei Zhou](https://zjw49246.github.io/we
 
 Our paper and video results can be found at our [project website](https://vpfm.sinanw.com/).
 
+## Cloning This Repository with Submodules
+
+This repository contains an external submodule [`AMGPCG_Pybind_Torch`](https://github.com/swang3081/AMGPCG_Pybind_Torch), located under the `external/` directory.  
+To ensure everything builds correctly, make sure to clone the repository **with submodules**:
+
+```bash
+git clone --recurse-submodules https://github.com/pfm-gatech/VPFM.git
+```
+
 ## Installation
 Our code is tested on Windows 11 with CUDA 12.3, Python 3.10.9, and Taichi 1.6.0.
 
