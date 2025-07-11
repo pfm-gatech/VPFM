@@ -12,6 +12,7 @@ import torch
 import time
 # from poisson_solver_permenant_stream import PoissonSolver
 from amgpcg_pybind_taichi import PoissonSolver
+from amgpcg_pybind import AMGPCGTorch
 
 #
 half_dx = dx * 0.5
@@ -231,14 +232,7 @@ a_x_pytorch = torch.empty((tile_dim_vec[0]*8, tile_dim_vec[1]*8, tile_dim_vec[2]
 a_y_pytorch = torch.empty((tile_dim_vec[0]*8, tile_dim_vec[1]*8, tile_dim_vec[2]*8), dtype=torch.float32, device="cuda:0", memory_format=torch.contiguous_format)
 a_z_pytorch = torch.empty((tile_dim_vec[0]*8, tile_dim_vec[1]*8, tile_dim_vec[2]*8), dtype=torch.float32, device="cuda:0", memory_format=torch.contiguous_format)
 is_dof_pytorch = torch.empty((tile_dim_vec[0]*8, tile_dim_vec[1]*8, tile_dim_vec[2]*8), dtype=torch.uint8, device="cuda:0", memory_format=torch.contiguous_format)
-
-b_pytorch_flat = torch.empty((tile_dim_vec[0]*8 * tile_dim_vec[1]*8 *tile_dim_vec[2]*8), dtype=torch.float32, device="cuda:0", memory_format=torch.contiguous_format)
-a_diag_pytorch_flat = torch.empty((tile_dim_vec[0]*8 * tile_dim_vec[1]*8 *tile_dim_vec[2]*8), dtype=torch.float32, device="cuda:0", memory_format=torch.contiguous_format)
-a_x_pytorch_flat = torch.empty((tile_dim_vec[0]*8 * tile_dim_vec[1]*8 *tile_dim_vec[2]*8), dtype=torch.float32, device="cuda:0", memory_format=torch.contiguous_format)
-a_y_pytorch_flat = torch.empty((tile_dim_vec[0]*8 * tile_dim_vec[1]*8 *tile_dim_vec[2]*8), dtype=torch.float32, device="cuda:0", memory_format=torch.contiguous_format)
-a_z_pytorch_flat = torch.empty((tile_dim_vec[0]*8 * tile_dim_vec[1]*8 *tile_dim_vec[2]*8), dtype=torch.float32, device="cuda:0", memory_format=torch.contiguous_format)
-is_dof_pytorch_flat = torch.empty((tile_dim_vec[0]*8 * tile_dim_vec[1]*8 *tile_dim_vec[2]*8), dtype=torch.uint8, device="cuda:0", memory_format=torch.contiguous_format)
-xinitial_pytorch_flat = torch.empty((tile_dim_vec[0]*8 * tile_dim_vec[1]*8 *tile_dim_vec[2]*8), dtype=torch.float32, device="cuda:0", memory_format=torch.contiguous_format)
+x_pytorch = torch.empty((tile_dim_vec[0]*8, tile_dim_vec[1]*8, tile_dim_vec[2]*8), dtype=torch.float32, device="cuda:0", memory_format=torch.contiguous_format)
 
 edge_x_boundary_mask_noin.fill(0)
 edge_y_boundary_mask_noin.fill(0)
@@ -251,6 +245,22 @@ edge_noin_mask(edge_x_boundary_mask_noin, edge_y_boundary_mask_noin, edge_z_boun
 extend_boundary_field(edge_x_boundary_mask_noin, edge_x_boundary_mask_extend_noin)
 extend_boundary_field(edge_y_boundary_mask_noin, edge_y_boundary_mask_extend_noin)
 extend_boundary_field(edge_z_boundary_mask_noin, edge_z_boundary_mask_extend_noin)
+
+raw_res = [res_x+1, res_y+1, res_z+1]
+bottom_smoothing = 40
+verbose = False
+tile_size = 8
+# tile_dim = [
+#     (raw_res[0] + tile_size - 1) // tile_size,
+#     (raw_res[1] + tile_size - 1) // tile_size,
+#     (raw_res[2] + tile_size - 1) // tile_size,
+# ]
+
+tile_dim = tile_dim_vec
+
+amgpcg_torch = AMGPCGTorch(
+    tile_dim, bottom_smoothing, verbose, False, False
+)
 
 @ti.kernel
 def construct_adiag(a_diag:ti.template(), axis:int):
@@ -363,7 +373,7 @@ def rearrange_tensor_from_cuda(tensor_flat, original_shape, tile_dim_vec, tile_s
     return tensor
 
 
-def rtf_solve(stream, stream_ext, w, edge_mask, edge_mask_extend, axis, solver_poisson):
+def rtf_solve(stream, stream_ext, w, edge_mask, edge_mask_extend, axis, amgpcg_torch):
     # prepare for lhs
     construct_adiag(a_diag_pretorch, axis)
     construct_aadj(a_x_pretorch, edge_mask_extend, 0)
@@ -381,34 +391,24 @@ def rtf_solve(stream, stream_ext, w, edge_mask, edge_mask_extend, axis, solver_p
     copy_to_external(a_y_pretorch, a_y_pytorch)
     copy_to_external(a_z_pretorch, a_z_pytorch)
     copy_to_external(reverse_mask_extend, is_dof_pytorch)
-
-    rearrange_tensor_for_cuda(b_pytorch, tile_dim_vec, tile_size, b_pytorch_flat)
-    rearrange_tensor_for_cuda(a_diag_pytorch, tile_dim_vec, tile_size, a_diag_pytorch_flat)
-    rearrange_tensor_for_cuda(a_x_pytorch, tile_dim_vec, tile_size, a_x_pytorch_flat)
-    rearrange_tensor_for_cuda(a_y_pytorch, tile_dim_vec, tile_size, a_y_pytorch_flat)
-    rearrange_tensor_for_cuda(a_z_pytorch, tile_dim_vec, tile_size, a_z_pytorch_flat)
-    rearrange_tensor_for_cuda(is_dof_pytorch, tile_dim_vec, tile_size, is_dof_pytorch_flat)
-    torch.zero_(xinitial_pytorch_flat)
-
     ti.sync()
-    solver_poisson.setup(
-        a_x=a_x_pytorch_flat,
-        a_y=a_y_pytorch_flat,
-        a_z=a_z_pytorch_flat,
-        b=b_pytorch_flat,
-        a_diag=a_diag_pytorch_flat,
-        is_dof=is_dof_pytorch_flat,
-        x_initial=xinitial_pytorch_flat,
-        is_pure_neumann = False
+
+    amgpcg_torch.load_coeff(
+        a_diag_pytorch,
+        a_x_pytorch,
+        a_y_pytorch,
+        a_z_pytorch,
+        is_dof_pytorch
     )
 
-    solver_poisson.build(6.0, -1.0)
-    solver_poisson.solve(xinitial_pytorch_flat)
+    amgpcg_torch.build(6.0, -1.0)
+    amgpcg_torch.load_rhs(b_pytorch)
 
+    torch.zero_(x_pytorch)
+    amgpcg_torch.solve(x_pytorch,
+            pure_neumann = False)
 
-    result_tensor = rearrange_tensor_from_cuda(xinitial_pytorch_flat, (res_x+1, res_y+1, res_z+1), tile_dim_vec, tile_size)
-
-    copy_from_external(stream_ext, result_tensor)
+    copy_from_external(stream_ext, x_pytorch)
     back_extend_field(stream, stream_ext)
     mtply_reversemask(stream, edge_mask, stream, 1.0)
 
@@ -418,7 +418,7 @@ def rtf_solve_harmonic_cutcell(bv_x, bv_y, bv_z,
                         x_wall_v, y_wall_v, z_wall_v, 
                         inner_boundary_mask_extend,
                         surf_occupancy,
-                        solver_poisson):
+                        amgpcg_torch):
     # prepare for lhs
     construct_adiag_harmonic_cutcell(a_diag_pretorch, inner_boundary_mask_extend, surf_face_fraction_x_ext,
                                      surf_face_fraction_y_ext, surf_face_fraction_z_ext)
@@ -433,47 +433,35 @@ def rtf_solve_harmonic_cutcell(bv_x, bv_y, bv_z,
                                 surf_face_fraction_z_ext, 
                                 dx)
 
-    t1 = time.time()
     copy_to_external(a_diag_pretorch, a_diag_pytorch)
     copy_to_external(a_x_pretorch, a_x_pytorch)
     copy_to_external(a_y_pretorch, a_y_pytorch)
     copy_to_external(a_z_pretorch, a_z_pytorch)
     copy_to_external(reverse_mask_extend, is_dof_pytorch)
-    t2 = time.time()
-
-    rearrange_tensor_for_cuda(b_pytorch, tile_dim_vec, tile_size, b_pytorch_flat)
-    rearrange_tensor_for_cuda(a_diag_pytorch, tile_dim_vec, tile_size, a_diag_pytorch_flat)
-    rearrange_tensor_for_cuda(a_x_pytorch, tile_dim_vec, tile_size, a_x_pytorch_flat)
-    rearrange_tensor_for_cuda(a_y_pytorch, tile_dim_vec, tile_size, a_y_pytorch_flat)
-    rearrange_tensor_for_cuda(a_z_pytorch, tile_dim_vec, tile_size, a_z_pytorch_flat)
-    rearrange_tensor_for_cuda(is_dof_pytorch, tile_dim_vec, tile_size, is_dof_pytorch_flat)
-
-    torch.zero_(xinitial_pytorch_flat)
 
     ti.sync()
-    t5 = time.time()
-    solver_poisson.setup(
-        a_x=a_x_pytorch_flat,
-        a_y=a_y_pytorch_flat,
-        a_z=a_z_pytorch_flat,
-        b=b_pytorch_flat,
-        a_diag=a_diag_pytorch_flat,
-        is_dof=is_dof_pytorch_flat,
-        x_initial=xinitial_pytorch_flat,
-        is_pure_neumann = True
+
+    amgpcg_torch.load_coeff(
+        a_diag_pytorch,
+        a_x_pytorch,
+        a_y_pytorch,
+        a_z_pytorch,
+        is_dof_pytorch
     )
 
-    solver_poisson.build(6.0, -1.0)
-    solver_poisson.solve(xinitial_pytorch_flat)
-    t6 = time.time()
-    result_tensor = rearrange_tensor_from_cuda(xinitial_pytorch_flat, (res_x+1, res_y+1, res_z+1), tile_dim_vec, tile_size)
-    copy_from_external(p_ext, result_tensor)
+    amgpcg_torch.build(6.0, -1.0)
+    amgpcg_torch.load_rhs(b_pytorch)
+
+    torch.zero_(x_pytorch)
+    amgpcg_torch.solve(x_pytorch,
+            pure_neumann = True)
+    
+    copy_from_external(p_ext, x_pytorch)
     scale_field(p_ext, inv_dx, p_ext)
     subtract_grad_p(u_x, u_y, u_z, p_ext, inner_boundary_mask_extend, surf_face_fraction_x, surf_face_fraction_y,
                                 surf_face_fraction_z, x_wall_v, y_wall_v, z_wall_v)
     enforce_surface_vel(center_boundary_mask, boundary_vel,
     u_x, u_y, u_z, x_wall_v, y_wall_v, z_wall_v)
-    return (t6-t5)
 
 
 @ti.func
@@ -1230,7 +1218,10 @@ def main(from_frame=0):
     ik = 0
 
     frame_times = np.zeros(total_steps)
-    solver_poisson = PoissonSolver(tile_dim_vec, level_num=3, bottom_smoothing=40)
+    # amgpcg_torch = PoissonSolver(tile_dim_vec, level_num=3, bottom_smoothing=40)
+    amgpcg_torch = AMGPCGTorch(
+        tile_dim, bottom_smoothing, verbose, False, False
+    )
     total_time = 0.0
     while True:
         i += 1
@@ -1421,16 +1412,16 @@ def main(from_frame=0):
                 psi_x, psi_y, psi_z,
                 dx,
             )
-            rtf_solve(stream_x, stream_x_extend, w_x, edge_x_boundary_mask_noin, edge_x_boundary_mask_extend_noin, 0, solver_poisson)
-            rtf_solve(stream_y, stream_y_extend, w_y, edge_y_boundary_mask_noin, edge_y_boundary_mask_extend_noin, 1, solver_poisson)
-            rtf_solve(stream_z, stream_z_extend, w_z, edge_z_boundary_mask_noin, edge_z_boundary_mask_extend_noin, 2, solver_poisson)
+            rtf_solve(stream_x, stream_x_extend, w_x, edge_x_boundary_mask_noin, edge_x_boundary_mask_extend_noin, 0, amgpcg_torch)
+            rtf_solve(stream_y, stream_y_extend, w_y, edge_y_boundary_mask_noin, edge_y_boundary_mask_extend_noin, 1, amgpcg_torch)
+            rtf_solve(stream_z, stream_z_extend, w_z, edge_z_boundary_mask_noin, edge_z_boundary_mask_extend_noin, 2, amgpcg_torch)
             stream2velocity(u_x, u_y, u_z, stream_x, stream_y, stream_z, dx)
             rtf_solve_harmonic_cutcell(bv_x, bv_y, bv_z,
                    u_x, u_y, u_z, boundary_vel, p_ext,
                    x_wall_v, y_wall_v, z_wall_v, 
                    in_occupancy_ext,
                    surf_occupancy,
-                   solver_poisson)
+                   amgpcg_torch)
 
 
         stretch_T_F_and_advect_particles_hessian(particles_pos, T_x_grad_m, T_y_grad_m, T_z_grad_m, 
@@ -1445,16 +1436,16 @@ def main(from_frame=0):
             edge_x_boundary_mask, edge_y_boundary_mask, edge_z_boundary_mask)
         
 
-        rtf_solve(stream_x, stream_x_extend, w_x, edge_x_boundary_mask_noin, edge_x_boundary_mask_extend_noin, 0, solver_poisson)
-        rtf_solve(stream_y, stream_y_extend, w_y, edge_y_boundary_mask_noin, edge_y_boundary_mask_extend_noin, 1, solver_poisson)
-        rtf_solve(stream_z, stream_z_extend, w_z, edge_z_boundary_mask_noin, edge_z_boundary_mask_extend_noin, 2, solver_poisson)
+        rtf_solve(stream_x, stream_x_extend, w_x, edge_x_boundary_mask_noin, edge_x_boundary_mask_extend_noin, 0, amgpcg_torch)
+        rtf_solve(stream_y, stream_y_extend, w_y, edge_y_boundary_mask_noin, edge_y_boundary_mask_extend_noin, 1, amgpcg_torch)
+        rtf_solve(stream_z, stream_z_extend, w_z, edge_z_boundary_mask_noin, edge_z_boundary_mask_extend_noin, 2, amgpcg_torch)
         stream2velocity(u_x, u_y, u_z, stream_x, stream_y, stream_z, dx)
         rtf_solve_harmonic_cutcell(bv_x, bv_y, bv_z,
                    u_x, u_y, u_z, boundary_vel, p_ext,
                    x_wall_v, y_wall_v, z_wall_v, 
                    in_occupancy_ext,
                    surf_occupancy,
-                   solver_poisson)
+                   amgpcg_torch)
         apply_bc_w(u_x, u_y, u_z, w_x, w_y, w_z, 
                     stream_x, stream_y, stream_z, 
                     center_boundary_mask, boundary_vel, inv_dx)
