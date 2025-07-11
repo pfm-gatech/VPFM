@@ -32,7 +32,7 @@ pip install -r requirements.txt
 Then, follow the instructions in the [AMGPCG_Pybind_Torch repository](https://github.com/swang3081/AMGPCG_Pybind_Torch) to install the AMGPCG pybind.
 
 ## Simulation
-To run, execute:
+To run the plesiosaur example, first download the pose sequence from [here](https://drive.google.com/file/d/1tKjaIca3SLLkKTCBeC9OZrUpJP58YLLN/view?usp=sharing), unzip it under the same folder as the src code, then execute:
 
 ```bash
 python run_vpfm.py
