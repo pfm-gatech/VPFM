@@ -11,7 +11,7 @@ from my_lbvh import *
 import torch
 import time
 # from poisson_solver_permenant_stream import PoissonSolver
-from amgpcg_pybind_taichi import PoissonSolver
+# from amgpcg_pybind_taichi import PoissonSolver
 from amgpcg_pybind import AMGPCGTorch
 
 #
