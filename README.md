@@ -29,7 +29,7 @@ Then, install the requirements with:
 pip install -r requirements.txt
 ```
 
-Then, follow the instruction from [PyTorch](https://pytorch.org/get-started/locally/) and install pytorch 2.1.2+cu121.
+Then, follow the instruction from [PyTorch](https://pytorch.org/get-started/locally/) and install pytorch with cuda enabled.
 
 Then, follow the instructions in the [AMGPCG_Pybind_Torch repository](https://github.com/swang3081/AMGPCG_Pybind_Torch) to install the AMGPCG pybind.
 
