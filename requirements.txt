@@ -7,3 +7,4 @@ imageio-ffmpeg
 scipy
 vtk
 taichi==1.6.0
+libigl
